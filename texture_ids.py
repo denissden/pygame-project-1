@@ -3,12 +3,13 @@
 
 map_textures = {35:("ground.png"), # #
                 36:("ground_grass.png"), # $
-                37:("cloud.png"), # %
-                38:("wall_3.png"), # &
-                42:("wall_4.png"), # *
-                43:("wall_5.png"), # +
-                44:("wall_6.png"), # ,
+                37:("stone.png"), # %
+                38:("stonebrick.png"), # &
+                42:("stonebrick_carved.png"), # *
+                43:("stonebrick_cracked.png"), # +
+                44:("stonebrick_mossy.png"), # ,
                 46:("air.png"), # .
+                65:("broken_spawner.png"), # A
                 }
 
 collide_ids = [35, 36, 37, 38, 42, 43, 44]

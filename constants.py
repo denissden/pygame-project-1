@@ -1,3 +1,5 @@
+import os
+
 SIZE_FROM_RATIO = False
 RATIO = 16 / 9
 
@@ -12,12 +14,15 @@ FULLSCREEN = False
 ADVANCED_GRAPHICS = False
 
 DEBUG_SCREEN = True
-TEXTURE_PATH = 'data\\'
+TEXTURE_PATH = 'data/'
 LEVELS = ["1.txt"]
-LEVEL_PATH = 'data\\levels\\'
+LEVEL_PATH = 'data/levels/'
 CLASTER_SIZE = 4
 
-FOV = 9
+FOV = 15
 PLAYER_ONSCREEN_MOVEMENT_RECT = 8 # 3 or more
+PENETRATION_DELAY = 0.1
+PLAYER_HEALTH = 100
+MOB_LIFETIME = 10
 
 screen_rect = (0, 0, WIDTH, HEIGHT)

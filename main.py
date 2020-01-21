@@ -112,7 +112,6 @@ class StartScreen():
         self.cursor = CursorSprite(self.mouse_focused_sprites)
 
         self.debug_screen = DebugScreen(self)
-        self.settings = SettingsScreen(self)
         self.levels = LevelsScreen(self)
 
         self.tps = 0
@@ -137,7 +136,6 @@ class StartScreen():
                 self.tps = 1 / clock.get_fps()
             pygame.display.flip()
             clock.tick(FPS)
-
     # в функции threaded_loop обработка спрайтов разделена на 2 независимые вещи:
     # обработку движений и отрисовку. Причем обработка находится в высшем приоритете т.к
     # от нее зависит соприкосновение спрайтов. Отрисовка же выполняется раздельно, с свободное
@@ -206,8 +204,6 @@ class StartScreen():
                 # проверяем, нажимались ли кнопки
                 if self.button_play.is_colliding(self.cursor):
                     self.button_play.click()
-                if self.button_settings.is_colliding(self.cursor):
-                    self.button_settings.click()
                 if self.button_close.is_colliding(self.cursor):
                     self.button_close.click()
 
@@ -226,7 +222,7 @@ class StartScreen():
                         distance /= 1.3 ** 2
 
                 # анимация кнопок
-                for b in [self.button_play, self.button_settings, self.button_close]:
+                for b in [self.button_play, self.button_close]:
                     if b.is_colliding(self.cursor):
                         b.animate()
                     else:
@@ -273,20 +269,13 @@ class StartScreen():
         ls.set_element("Loading buttons")
         self.button_play = ButtonSprite((WIDTH / 2, HEIGHT / 3), 'button_play.png', 0.4, self.levels_screen,
                                         self.button_sprites)
-        self.button_settings = ButtonSprite((WIDTH / 2, HEIGHT / 1.7), 'button_settings.png', 0.2, self.settings_screen,
-                                            self.button_sprites)
         self.button_close = ButtonSprite((WIDTH - 30, 30), 'button_close.png', 0.15, terminate, self.button_sprites)
         ls.draw(True)
 
     def levels_screen(self):
         self.running = False
-        g = GameScreen(self, "")
+        g = LevelsScreen(self)
         g.loop()
-        self.levels.loop()
-
-    def settings_screen(self):
-        self.running = False
-        self.settings.loop()
 
     def get_tps(self):
         return self.tps
@@ -300,6 +289,8 @@ class GameScreen():
         self.parent = parent
         parent.running = False
         self.screen = parent.screen
+
+        level = str(level) + '.txt'
 
         self.other_screens = []
 
@@ -323,28 +314,42 @@ class GameScreen():
         self.cursor = CursorSprite(self.mouse_focused_sprites)
 
         self.debug_screen = parent.debug_screen
-        self.settings = parent.settings_screen
-        self.levels = parent.levels
 
-        self.game_field = GameField(self, self.loading_screen, "1.txt", (0, 0))
-        self.game_field.init_spawners()
+        self.game_field = GameField(self, self.loading_screen, level, (0, 0))
 
         self.player = Player(self, self.player_sprites, (300, 300), 3)
-        self.player.set_weapon(TriangleBlaster(self, self.player,
-                                               self.weapon_sprites, self.player_projectile_sprites))
-
-        self.spawners = self.game_field.spawners
+        self.w_args = (self, self.player, self.weapon_sprites, self.player_projectile_sprites)
+        self.weapons = [TriangleBlaster,
+                        MachineGun,
+                        SniperRiffle,
+                        ]
+        self.weapon_index = 1
+        self.player.set_weapon(self.weapons[self.weapon_index](*self.w_args))
 
         self.healthbar = Healtbar(self.gui_sprites, 10, PLAYER_HEALTH, self.game_field.unit_size // 2, (0, 0))
 
+        self.time_indicator = TextIndicator(self, self.gui_sprites,
+                                            (WIDTH - 5, HEIGHT), 15, 0, "bottomright")
+
+        wave_indicator = WaveIndicator(self.gui_sprites, 12, (WIDTH // 2, HEIGHT - 10))
+        self.wave = Wave(self, level, wave_indicator)
+
         self.you_died = YouDiedScreen(self, 4)
 
+        self.init_time = time.time()
+        self.timer = 0
+
     def loop(self):
+
         self.running = True
         break_reason = "died"
         vec = pygame.math.Vector2
         last_tick = time.time()
         tick_time = 0
+
+        escape_reset = time.time()
+        f_reset = time.time()
+        f_2_reset = time.time()
 
         move_map = {pygame.K_w: (0, -1),
                     pygame.K_s: (0, 1),
@@ -360,19 +365,38 @@ class GameScreen():
                                                                         self.player.rect.center[1] - event.pos[
                                                                             1]).as_polar()[1]
 
-                if event.type == pygame.KEYDOWN:
-                    if event.key == pygame.K_SPACE:
+                if event.type == pygame.MOUSEBUTTONDOWN:
+                    if event.button == 3:
+                        self.player_projectile_sprites.update(None, event.pos)
+                    if event.button == 1:
                         shooting = True
 
-                if event.type == pygame.KEYUP:
-                    if event.key == pygame.K_SPACE:
+                if event.type == pygame.MOUSEBUTTONUP:
+                    if event.button == 1:
                         shooting = False
-
-                if event.type == pygame.MOUSEBUTTONDOWN:
-                    self.player_projectile_sprites.update(None, event.pos)
 
                 if event.type == pygame.QUIT:
                     pygame.quit()
+
+                if event.type == pygame.KEYDOWN:
+                    if event.key == pygame.K_ESCAPE:
+                        if escape_reset >= time.time():
+                            break_reason = "died"
+                            self.running = False
+                        escape_reset = time.time() + 0.5
+                    if event.key == pygame.K_TAB:
+                        self.weapon_index = (self.weapon_index + 1) % len(self.weapons)
+                        self.player.set_weapon(self.weapons[self.weapon_index](*self.w_args))
+                    if event.key == pygame.K_F12:
+                        if f_reset >= time.time():
+                            self.player.set_weapon(LollyBomb(*self.w_args))
+                        f_reset = time.time() + 0.5
+                    if event.key == pygame.K_F2:
+                        print("a")
+                        if f_2_reset >= time.time():
+                            print("b")
+                            self.player.weapon.reloading_time = 0
+                        f_2_reset = time.time() + 0.5
 
             pressed = pygame.key.get_pressed()
             move = [move_map[key] for key in move_map if pressed[key]]
@@ -386,13 +410,19 @@ class GameScreen():
             if shooting:
                 self.player.weapon.shoot()
 
+            self.timer = int(time.time() - self.init_time)
+            self.time_indicator.set_text(f"You survived {self.timer} seconds", "bottomright")
+
             self.spawner_sprites.update()
             self.projectile_sprites.update(tick_time)
             self.player_projectile_sprites.update(tick_time)
             self.weapon_sprites.update()
             self.player.update()
             self.mob_sprites.update(tick_time)
+            self.wave.update()
+
             self.healthbar.update(self.player.health)
+
             self.dead_sprites.update()
             particles.update(tick_time)
 
@@ -427,7 +457,7 @@ class GameScreen():
             last_tick = time.time()
             # print(self.game_field.position)
         if break_reason == "died":
-            self.you_died.loop()
+            self.you_died.loop(self.timer)
             s.loop()
 
 
@@ -440,16 +470,16 @@ class YouDiedScreen():
 
         self.parent = parent
         self.player = pygame.sprite.Sprite(self.group)
-        self.player_main_image = pygame.image.load(TEXTURE_PATH + "player.png")
+        self.player_main_image = pygame.image.load(TEXTURE_PATH + "ilya.png")
         self.player.image = self.parent.player.image
         self.player.rect = self.parent.player.rect
 
         self.animate = animate
         self.time_shown = time_shown
 
-        self.font_size = 20
+        self.font_size = 2
         self.font = pygame.font.Font(os.path.join('data', 'fonts', "RobotoSlab-Bold.ttf"), self.font_size)
-        string_rendered = self.font.render("YOU DIED", 1, pygame.Color('red'))
+        string_rendered = self.font.render("YOU SURVIVED 0 SECONDS", 1, pygame.Color('red'))
         self.text = pygame.sprite.Sprite(self.group)
         self.text.image = string_rendered
         self.text.rect = self.text.image.get_rect()
@@ -459,11 +489,15 @@ class YouDiedScreen():
         self.player_end_size = WIDTH
 
         self.text_start_size = self.font_size
-        self.text_end_size = 100
+        self.text_end_size = WIDTH // 15
 
         self.start_time = time.time()
+        pygame.mixer.music.load(TEXTURE_PATH + 'gggg.mp3')
+        pygame.mixer.music.set_volume(1)
 
-    def loop(self):
+    def loop(self, timer):
+        pygame.mixer.music.play(-1)
+        pygame.mixer.music.set_volume(1)
         vec = pygame.math.Vector2
 
         stop_time = time.time() + self.time_shown
@@ -478,7 +512,7 @@ class YouDiedScreen():
 
             self.player.image = pygame.transform.scale(self.player_main_image, (img_size, img_size))
             self.font = pygame.font.Font(os.path.join('data', 'fonts', "RobotoSlab-Bold.ttf"), text_size)
-            string_rendered = self.font.render("YOU DIED", 1, pygame.Color('red'))
+            string_rendered = self.font.render(f"YOU SURVIVED {timer} SECONDS", 1, pygame.Color('red'))
             self.text.image = string_rendered
 
             self.text.rect = self.text.image.get_rect()
@@ -495,6 +529,7 @@ class YouDiedScreen():
                 break
 
             pygame.display.flip()
+        pygame.mixer.music.stop()
 
 
 class SettingsScreen():
@@ -511,33 +546,168 @@ class LevelsScreen():
         self.parent = parent
         self.screen = screen
 
-        self.start_screen_sprites = pygame.sprite.Group()
-        self.perspective_sprites = pygame.sprite.Group()
         self.mouse_focused_sprites = pygame.sprite.Group()
         self.button_sprites = pygame.sprite.Group()
         self.debug_sprites = pygame.sprite.Group()
 
         self.loading_screen = LoadingScreen(self.screen)
 
+        self.cursor = CursorSprite(self.mouse_focused_sprites)
+        self.debug_screen = DebugScreen(self)
 
+        self.init_buttons()
 
-        self.running = True
+        self.level = 1
+        self.index = 0
 
     def loop(self):
-        print("levels screen")
+        self.running = True
+        while self.running:
+            screen.fill((212, 123, 88))
+            self.calculate_sprites()
+            # рисуем спрайты
+            self.button_sprites.draw(self.screen)
+
+            if pygame.mouse.get_focused():
+                self.mouse_focused_sprites.draw(self.screen)
+
+            if DEBUG_SCREEN:
+                self.debug_screen.update_draw()
+
+            if clock.get_fps() != 0:
+                self.tps = 1 / clock.get_fps()
+            pygame.display.flip()
+            clock.tick(FPS)
+
+    def calculate_sprites(self):
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                terminate()
+
+            if event.type == pygame.MOUSEBUTTONDOWN:
+                # проверяем, нажимались ли кнопки
+                if self.button_play.is_colliding(self.cursor):
+                    self.button_play.click()
+                if self.button_close.is_colliding(self.cursor):
+                    self.button_close.click()
+
+            if event.type == pygame.MOUSEMOTION:
+                self.cursor.rect = event.pos
+
+                # анимация кнопок
+                for b in [self.button_play, self.button_close]:
+                    if b.is_colliding(self.cursor):
+                        b.animate()
+                    else:
+                        b.animate(False)
 
     def init_buttons(self):
         ls = self.loading_screen
         ls.set_element("Loading buttons")
         self.button_close = ButtonSprite((WIDTH - 30, 30),
-                        'button_close.png', 0.15, terminate, self.button_sprites)
+                        'button_close.png', 0.15, self.quit, self.button_sprites)
+        self.button_left = ButtonSprite((WIDTH + 100, HEIGHT // 2),
+                        'sniper_riffle_projectile.png', 0.15, terminate,
+                                        self.button_sprites, rotate=90)
+        self.button_play = ButtonSprite((WIDTH / 2, HEIGHT / 3), 'button_play.png', 0.4, self.play,
+                                        self.button_sprites)
         ls.draw(True)
 
     def quit(self):
         self.running = False
+        g = StartScreen(screen)
+        g.loop()
+
+    def left(self):
+        print("left")
+
+    def right(self):
+        print("right")
+
+    def play(self):
+        self.running = False
+        g = GameScreen(self, self.level)
+        g.loop()
+
 
 
 #PLAYER AND MOBS
+class Wave():
+    length = 10
+    s_wave = 1
+    s_multiplier = 0.3
+    s_rate = 15
+    s_rate_offset = 6
+    s_health = 500
+    s_health_multiplier = 10
+    m_count = 2
+    m_multiplier = 0.2
+
+    spawners = []
+
+    def __init__(self, parent, level, indicator):
+        self.parent = parent
+        self.level = level
+
+        self.indicator = indicator
+
+        with open(LEVEL_PATH + level, "rt") as file:
+            self.level_txt = file.read()
+
+        text = self.level_txt.split("+Wave+")[1]
+        print(*text)
+        for line in text.split(";"):
+            tmp = "self." + line.strip()
+            try:
+                exec(tmp)
+                print(tmp)
+            except:
+                print("fail" + tmp)
+
+        self.w_next = time.time()
+
+    def update(self):
+        value = (self.w_next - time.time()) / self.length
+        self.indicator.update(value)
+
+        if self.w_next <= time.time():
+            self.w_next = time.time() + self.length
+            self.s_wave += self.s_multiplier
+            self.m_count += self.m_multiplier
+            self.s_health += self.s_health_multiplier
+
+            self.init_spawners()
+
+    def init_spawners(self):
+        block = min(SIZE) // FOV
+        tmp_group = pygame.sprite.Group()
+        for i in range(int(self.s_wave)):
+            for i in range(10):
+                x = random.randint(0, self.parent.game_field.txt_x - 1)
+                y = random.randint(0, self.parent.game_field.txt_y - 1)
+                if self.parent.game_field.is_air(x, y, True):
+                    print(x, y)
+                    spawner = Spawner(self.parent,
+                                      self.parent.spawner_sprites,
+                                      (x * block, y * block),
+                                      0,
+                                      rate=self.s_rate + (0.5 - random.random()) * self.s_rate_offset,
+                                      count=int(self.m_count),
+                                      health=self.s_health)
+                    for s in pygame.sprite.spritecollide(spawner, self.parent.spawner_sprites, False):
+                        if s != spawner:
+                            spawner.kill()
+                    break
+
+    def set(self, **kwargs):
+        for key, value in kwargs.items():
+            line = f"self.{key} = {value}"
+            try:
+                exec(line)
+            except:
+                print("failed exec")
+
+
 class Player(pygame.sprite.Sprite):
     img = pygame.image.load(TEXTURE_PATH + "player.png")
     size = min(SIZE) // FOV * 0.7
@@ -685,6 +855,7 @@ class Mob(Player):
         self.shoot_distance = 2.5 * block
         self.move_stop_distance = 2.3 * block
         self.go_away_distance = 1 * block
+        self.go_away_time = 0.5
 
         self.image = self.img
         center = self.rect.center
@@ -762,7 +933,7 @@ class Mob(Player):
         elif self.to_player < self.go_away_distance:
             self.move_direction.rotate_ip(random.randint(-30, 30))
             self.move(-self.move_direction, self.tick_time)
-            self.next_move_direction_change = time.time() + 0.5
+            self.next_move_direction_change = time.time() + self.go_away_time
 
 
 class Sniper(Mob):
@@ -781,10 +952,11 @@ class Sniper(Mob):
         self.rect.center = center
 
         self.health = 25
-        self.fov = 16 * block
+        self.fov = 25 * block
         self.shoot_distance = 10 * block
         self.move_stop_distance = 8 * block
         self.go_away_distance = 6 * block
+        self.go_away_time = 2
 
         self.set_weapon(MobSniperRiffle(self.parent, self,
                                         self.parent.weapon_sprites, self.parent.projectile_sprites))
@@ -808,10 +980,11 @@ class Terrorist(Mob):
         self.rect.center = center
 
         self.health = 75
-        self.fov = 6 * block
+        self.fov = 7 * block
         self.shoot_distance = 3 * block
         self.move_stop_distance = 2.7 * block
         self.go_away_distance = 2.6 * block
+        self.go_away_time = 2
 
         self.set_weapon(MobMachineGun(self.parent, self,
                                       self.parent.weapon_sprites, self.parent.projectile_sprites))
@@ -820,24 +993,25 @@ class Terrorist(Mob):
 
 
 class Spawner(Player):
+    img = pygame.image.load(TEXTURE_PATH + "spawner.png")
+    size = min(SIZE) // FOV
+    img = pygame.transform.smoothscale(img, (int(size), int(size))).convert_alpha()
+
     def __init__(self, *args, **kwargs):
         vec = pygame.math.Vector2
         super().__init__(*args)
 
-        image = pygame.image.load(TEXTURE_PATH + "spawner.png")
-        size = min(SIZE) // FOV
-        self.size = size
-        image = pygame.transform.smoothscale(image, (int(size), int(size))).convert_alpha()
-        self.image = image
+        self.image = self.img
+
+        self.rect.center += vec(self.parent.game_field.position)
 
         self.set_weapon(None)
         self.do_spawn = True
 
-        self.spawn_rate = 5
-        self.spawn_count = 2
-        self.start_wave = 0
+        self.spawn_rate = kwargs["rate"]
+        self.spawn_count = kwargs['count']
         self.spawn_mobs = (Mob, Sniper, Terrorist)
-        self.health = 100
+        self.health = kwargs['health']
         self.heart_size = min(SIZE) // (FOV * 5)
 
         self.last_field_pos = self.parent.game_field.position
@@ -909,6 +1083,12 @@ class BrokenSpawner(pygame.sprite.Sprite):
         self.particles_interval = 0.3
         self.next_particle = time.time()
 
+        self.kill_time = time.time() + random.randint(10, 20)
+
+        for _ in range(20):
+            particle_offset = pygame.math.Vector2(random.randint(0, self.size), random.randint(0, self.size))
+            Cloud(self.parent, self.size // 3, self.rect.topleft + particle_offset, 1, 1, 2, 1)
+
     def update(self):
         self.rect.x += self.parent.game_field.position[0] - self.last_field_pos[0]
         self.rect.y += self.parent.game_field.position[1] - self.last_field_pos[1]
@@ -923,6 +1103,9 @@ class BrokenSpawner(pygame.sprite.Sprite):
                 Explosion(self.parent, int(self.size / 3), self.rect.topleft + particle_offset, 0.4, 0.1, 0.6, 1)
             self.particles_left -= 1
             self.next_particle = time.time() + self.particles_interval
+
+        if self.kill_time <= time.time():
+            self.kill()
 
 
 # WEAPONS
@@ -991,7 +1174,6 @@ class TriangleBlaster(Weapon):
 
         x_crop, y_crop = 10, 1
         image_scale = 0.6
-
         image = pygame.image.load(TEXTURE_PATH + "triangle_blaster.png")
         image = pygame.transform.smoothscale(image, (int((min(SIZE) // FOV) * x_crop * image_scale),
                                                      int((min(SIZE) // FOV) * y_crop * 2 * image_scale)))
@@ -1010,10 +1192,10 @@ class TriangleBlaster(Weapon):
         self.next_image_swap = time.time()
 
         self.state = 2  # 0 - unloaded, 1 - loading, 2 - loaded
-        self.reloading_time = 2  # second
-        self.p_damage = 20
+        self.reloading_time = 1.5  # second
+        self.p_damage = 30
         self.p_penetration = 8  # how many entities it can fly through
-        self.p_velocity = 4  # tiles/sec
+        self.p_velocity = 5  # tiles/sec
         self.p_size = (min(SIZE) // FOV) // 3
         self.p_image = "triangle_blaster_projectile.png"
         self.p_distance = 10  # tiles
@@ -1098,12 +1280,12 @@ class MachineGun(Weapon):
         self.default_image = image
 
         self.reloading_time = 0.03
-        self.p_damage = 1
+        self.p_damage = 2
         self.p_penetration = 2
-        self.p_velocity = 3
+        self.p_velocity = 4.5
         self.p_size = (min(SIZE) // FOV) // 7
         self.p_image = "machine_gun_projectile.png"
-        self.p_distance = 6
+        self.p_distance = 8
 
         self.p_velocity_offset = 1.2
         self.p_distance_offset = 2
@@ -1153,13 +1335,13 @@ class SniperRiffle(Weapon):
         self.image = image
         self.default_image = image
 
-        self.reloading_time = 0.7
-        self.p_damage = 10
-        self.p_penetration = 20
+        self.reloading_time = 0.5
+        self.p_damage = 12
+        self.p_penetration = 30
         self.p_velocity = 7
         self.p_size = (min(SIZE) // FOV) // 3
         self.p_image = "sniper_riffle_projectile.png"
-        self.p_distance = 16
+        self.p_distance = 20
         self.p_penetration_timing = 0.01
 
         self.p_velocity_offset = 0.5
@@ -1207,22 +1389,25 @@ class MobSniperRiffle(SniperRiffle):
 
 class LollyBomb(Weapon):
     def __init__(self, *args):
+        self.ot_vinta = pygame.mixer.Sound(TEXTURE_PATH + 'lolly.wav')
+        self.ot_vinta.set_volume(0.3)
         super().__init__(*args)
 
-        self.reloading_time = 5
+        self.reloading_time = 3
         self.p_damage = 800
-        self.p_penetration = 10
-        self.p_velocity = 6
+        self.p_penetration = 20
+        self.p_velocity = 5
         self.p_size = (min(SIZE) // FOV) // 2
         self.p_image = "lolly_bomb_projectile.png"
-        self.p_distance = 1.5
-        self.p_penetration_timing = 0
+        self.p_distance = 3
+        self.p_penetration_timing = 0.01
 
         self.p_velocity_offset = 4
-        self.p_distance_offset = 1
+        self.p_distance_offset = 1.5
 
     def shoot(self):
         if self.next_shot_time <= time.time():
+            self.ot_vinta.play()
             for i in range(0, 360, 20):
                 LollyBombProjectile(self.parent,
                                     self.owner,
@@ -1512,21 +1697,47 @@ class Cloud(Particle):
     images = crop_image(images, 10, 1)
 
 
-class SpawnCountdown():
-    def __init__(self, pos, size, time_left):
-        self.time = time_left
-        self.next_particle = False
+#GUI
+class TextIndicator(pygame.sprite.Sprite):
+    def __init__(self, parent, group, pos, size, text, align):
+        super().__init__(group)
+        self.parent = parent
+
+        self.font = pygame.font.Font(os.path.join('data',
+                                'fonts', "RobotoSlab-Bold.ttf"), size)
+        self.size = size
+        self.text = str(text)
+
+        string_rendered = self.font.render(self.text, 1, pygame.Color('white'))
+
+        self.image = string_rendered
+        self.rect = self.image.get_rect()
+        self.rect.topleft = pos
 
         self.pos = pos
-        self.size = size
+        self.align = align
 
-    def update(self, time_left):
-        if int(self.time) > int(time_left):
-            self.time = time_left
-            self.next_particle = True
+        self.text_changed = False
 
+    def set_text(self, text, align="topleft"):
+        if self.text != text:
+            self.text_changed = True
+        if self.text_changed:
+            self.text = str(text)
+            string_rendered = self.font.render(self.text, 1, pygame.Color('white'))
+            self.image = string_rendered
+            self.rect = self.image.get_rect()
+            self.align = align
+            if self.align == "topleft":
+                self.rect.topleft = self.pos
+            elif self.align == "topright":
+                self.rect.topright = self.pos
+            elif self.align == "bottomleft":
+                self.rect.bottomleft = self.pos
+            elif self.align == "bottomright":
+                self.rect.bottomright = self.pos
+            self.text_changed = False
 
-# // TODO
 
 class Healtbar():
     def __init__(self, group, heart_count, max_health, size, pos):
@@ -1573,6 +1784,39 @@ class Healtbar():
             sprite.kill()
 
 
+class WaveIndicator(pygame.sprite.Sprite):
+    images = pygame.image.load(TEXTURE_PATH + "progress_bar.png")
+    images = crop_image(images, 1, 20)
+
+    def __init__(self, group, size, pos):
+        vec = pygame.math.Vector2
+        super().__init__(group)
+
+        tmp = []
+        for image in self.images:
+            tmp.append(pygame.transform.scale(image, (size * 20, size)))
+        self.images = tmp
+
+        self.group = group
+        self.state = 1
+
+        self.image = self.images[-1]
+        self.rect = self.image.get_rect()
+        self.rect.center = pos
+
+        self.state_changed = False
+
+    def update(self, state):
+        state = int(20 * state) % 20
+        if self.state != state:
+            self.state_changed = True
+        if self.state_changed:
+            self.image = self.images[state]
+            self.state = state
+            self.state_changed = False
+
+
+#OTHER
 class GameField(pygame.sprite.Group):
     def __init__(self, parent, loading_screen, level, pos=(0, 0)):
         super().__init__()
@@ -1589,6 +1833,7 @@ class GameField(pygame.sprite.Group):
         txt_map = text.strip().split("\n")
         self.txt_map = txt_map
 
+        self.txt_size = self.txt_x, self.txt_y = len(txt_map[0]), len(txt_map)
         self.position = self.x, self.y = pos
         self.move_counter_x, self.move_counter_y = 0, 0
 
@@ -1613,7 +1858,7 @@ class GameField(pygame.sprite.Group):
                     for xx in range(CLASTER_SIZE):
                         char_x, char_y = i * CLASTER_SIZE + xx, j * CLASTER_SIZE + yy
                         if char_x >= x or char_y >= y:
-                            char = "#"
+                            char = "."
                         else:
                             char = txt_map[char_y][char_x]
 
@@ -1641,23 +1886,6 @@ class GameField(pygame.sprite.Group):
 
         self.claster_map = claster_map
         self.sprite_map = sprite_map
-
-    def init_spawners(self):
-        spawners = []
-        text = self.level_txt.split("spawners:")[1]
-        for line in text.split(";"):
-            try:
-                l = dict()
-                exec(line, {}, l)
-                pos = l["pos"]
-                x = pos[0] * self.unit_size
-                y = pos[1] * self.unit_size
-                spawner = Spawner(self.parent, self.parent.spawner_sprites, (x, y), 0)
-                spawners.append(spawner)
-            except:
-                pass
-
-        self.spawners = spawners
 
     def move(self, pos=(0, 0)):
         self.move_counter_x += pos[0]
@@ -1792,7 +2020,7 @@ class CursorSprite(pygame.sprite.Sprite):
 
 
 class ButtonSprite(pygame.sprite.Sprite):
-    def __init__(self, pos=(0, 0), image_name="none.png", size=1, function=None, group=None, cursor=None):
+    def __init__(self, pos=(0, 0), image_name="none.png", size=1, function=None, group=None, cursor=None, **kwargs):
         if group is None:
             super().__init__(button_sprites)
         else:
@@ -1804,6 +2032,11 @@ class ButtonSprite(pygame.sprite.Sprite):
         except:
             print('Something is wrong with image or path')
             return
+
+        try:
+            image = pygame.transform.rotate(image, kwargs["rotate"])
+        except:
+            pass
 
         self.size = size
         self.raw_size = size
@@ -1822,6 +2055,8 @@ class ButtonSprite(pygame.sprite.Sprite):
         self.mask = pygame.mask.from_surface(self.image)
 
         self.cursor = cursor
+
+        self.size_a = 1
 
     def connect(self, function):
         self.function = function
@@ -1852,9 +2087,12 @@ class ButtonSprite(pygame.sprite.Sprite):
 
     def animate(self, state=True):
         if state:
-            self.set_size(self.raw_size * 1.1)
+            size_a = 1.1
         else:
-            self.set_size(self.raw_size)
+            size_a = 1
+        if self.size_a != size_a:
+            self.set_size(self.raw_size * size_a)
+            self.size_a = size_a
 
 
 class DebugScreen():
